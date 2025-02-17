@@ -1,46 +1,71 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 
-export default function MetricsTable({ setSelectedDevice }) {
+export default function MetricsTable({ setSelectedDevice, setSelectedMetric }) {
   const [metrics, setMetrics] = useState([]);
-  const [deviceIds, setDeviceIds] = useState([]); // Add this line to store device IDs
-  const [selectedDeviceId, setSelectedDeviceId] = useState(null); // Add state for selected device
+  const [deviceIds, setDeviceIds] = useState([]);
 
   // Fetch all device IDs
   useEffect(() => {
     axios
       .get("http://localhost:8080/api/devices")
       .then((response) => {
-        console.log("Device IDs:", response.data); // Debugging
-        if (response.data.length > 0) {
-          setDeviceIds(response.data); // Correct the issue here
-          setSelectedDeviceId(response.data[0]); // Set first device as selected
-        }
+        console.log("Device IDs:", response.data);
+        setDeviceIds(response.data);
       })
       .catch((error) => console.error("Error fetching device IDs:", error));
   }, []);
 
-  // Fetch network metrics for the selected device
+  // Start streaming and collect data
   useEffect(() => {
-    if (!selectedDeviceId) return; // Don't start SSE if no device is selected
+    if (deviceIds.length === 0) return;
 
-    const eventSource = new EventSource(
-      `http://localhost:8080/api/metrics/stream/${selectedDeviceId}`
-    );
+    const eventSources = deviceIds.map((deviceId) => {
+      axios
+        .post(`http://localhost:8080/api/metrics/start/${deviceId}`)
+        .then(() => console.log(`Started stream for ${deviceId}`))
+        .catch((error) =>
+          console.error(`Error starting stream for ${deviceId}:`, error)
+        );
 
-    eventSource.onmessage = (event) => {
-      console.log("Received SSE Data:", event.data); // Debugging
-      const data = JSON.parse(event.data);
-      setMetrics((prevMetrics) => [...prevMetrics, data]);
+      const eventSource = new EventSource(
+        `http://localhost:8080/api/metrics/stream/${deviceId}`
+      );
+
+      eventSource.onmessage = (event) => {
+        console.log(`Received Data for ${deviceId}:`, event.data);
+        try {
+          const data = JSON.parse(event.data);
+          setMetrics((prevMetrics) => {
+            const updated = [...prevMetrics];
+            const index = updated.findIndex(
+              (m) => m.deviceId === data.deviceId
+            );
+
+            if (index !== -1) {
+              updated[index] = data;
+            } else {
+              updated.push(data);
+            }
+            return updated;
+          });
+        } catch (error) {
+          console.error(`Error parsing SSE data for ${deviceId}:`, error);
+        }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error(`SSE Error for ${deviceId}:`, error);
+        eventSource.close();
+      };
+
+      return eventSource;
+    });
+
+    return () => {
+      eventSources.forEach((source) => source.close());
     };
-
-    eventSource.onerror = (error) => {
-      console.error("SSE Error:", error);
-      eventSource.close();
-    };
-
-    return () => eventSource.close();
-  }, [selectedDeviceId]);
+  }, [deviceIds]);
 
   return (
     <div className="bg-gray-800 p-4 rounded-lg shadow-lg">
@@ -60,13 +85,52 @@ export default function MetricsTable({ setSelectedDevice }) {
               <tr
                 key={m.deviceId}
                 className="cursor-pointer hover:bg-gray-700 text-white"
-                onClick={() => setSelectedDevice(m.deviceId)}
               >
-                <td className="p-3">{m.deviceId}</td>
-                <td className="p-3">{m.latency}</td>
-                <td className="p-3">{m.packet_loss}</td>
-                <td className="p-3">{m.throughput}</td>
-                <td className="p-3">{m.jitter}</td>
+                <td
+                  className="p-3"
+                  onClick={() => {
+                    setSelectedDevice(m.deviceId);
+                    setSelectedMetric(null);
+                  }}
+                >
+                  {m.deviceId}
+                </td>
+                <td
+                  className="p-3 cursor-pointer hover:bg-gray-600"
+                  onClick={() => {
+                    setSelectedDevice(m.deviceId);
+                    setSelectedMetric("latency");
+                  }}
+                >
+                  {m.latency}
+                </td>
+                <td
+                  className="p-3 cursor-pointer hover:bg-gray-600"
+                  onClick={() => {
+                    setSelectedDevice(m.deviceId);
+                    setSelectedMetric("packet_loss");
+                  }}
+                >
+                  {m.packet_loss}
+                </td>
+                <td
+                  className="p-3 cursor-pointer hover:bg-gray-600"
+                  onClick={() => {
+                    setSelectedDevice(m.deviceId);
+                    setSelectedMetric("throughput");
+                  }}
+                >
+                  {m.throughput}
+                </td>
+                <td
+                  className="p-3 cursor-pointer hover:bg-gray-600"
+                  onClick={() => {
+                    setSelectedDevice(m.deviceId);
+                    setSelectedMetric("jitter");
+                  }}
+                >
+                  {m.jitter}
+                </td>
               </tr>
             ))
           ) : (
